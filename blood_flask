@@ -1,0 +1,192 @@
+pip install flask flask-mysqldb mysql-connector-python
+
+# SQL code:
+
+CREATE DATABASE blood_bank;
+USE blood_bank;
+
+CREATE TABLE donors (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    age INT,
+    gender VARCHAR(10),
+    blood_type ENUM('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-') NOT NULL,
+    contact_info VARCHAR(100),
+    last_donation_date DATE
+);
+
+CREATE TABLE blood_inventory (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    blood_type ENUM('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-') UNIQUE NOT NULL,
+    quantity INT NOT NULL DEFAULT 0
+);
+
+-- Initialize inventory with all blood types
+INSERT INTO blood_inventory (blood_type, quantity) VALUES 
+    ('A+', 0), ('A-', 0), ('B+', 0), ('B-', 0), 
+    ('AB+', 0), ('AB-', 0), ('O+', 0), ('O-', 0);
+
+# File name: app.py
+
+from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_mysqldb import MySQL
+import MySQLdb.cursors
+from datetime import datetime
+
+app = Flask(__name__)
+app.secret_key = 'your_secret_key'
+
+# MySQL configuration
+app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_USER'] = 'myuser'
+app.config['MYSQL_PASSWORD'] = 'mypassword'
+app.config['MYSQL_DB'] = 'blood_bank'
+
+mysql = MySQL(app)
+
+# Route to view blood inventory
+@app.route('/')
+def inventory():
+    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
+    cursor.execute('SELECT * FROM blood_inventory')
+    inventory = cursor.fetchall()
+    return render_template('inventory.html', inventory=inventory)
+
+# Route to add a new donation
+@app.route('/add_donation', methods=['GET', 'POST'])
+def add_donation():
+    if request.method == 'POST':
+        name = request.form['name']
+        age = int(request.form['age'])
+        gender = request.form['gender']
+        blood_type = request.form['blood_type']
+        contact_info = request.form['contact_info']
+        quantity = int(request.form['quantity'])
+        donation_date = datetime.today().date()
+
+        cursor = mysql.connection.cursor()
+
+        # Insert donor record
+        cursor.execute('INSERT INTO donors (name, age, gender, blood_type, contact_info, last_donation_date) VALUES (%s, %s, %s, %s, %s, %s)',
+                       (name, age, gender, blood_type, contact_info, donation_date))
+        
+        # Update inventory for the donated blood type
+        cursor.execute('UPDATE blood_inventory SET quantity = quantity + %s WHERE blood_type = %s', (quantity, blood_type))
+        mysql.connection.commit()
+
+        flash('Donation added successfully!')
+        return redirect(url_for('inventory'))
+    return render_template('add_donation.html')
+
+# Route to view donor records
+@app.route('/donors')
+def donors():
+    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
+    cursor.execute('SELECT * FROM donors')
+    donors = cursor.fetchall()
+    return render_template('donors.html', donors=donors)
+
+# Route to handle alerts for low stock levels
+@app.route('/alerts')
+def alerts():
+    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
+    low_stock_threshold = 5
+    cursor.execute('SELECT * FROM blood_inventory WHERE quantity < %s', (low_stock_threshold,))
+    low_stock_items = cursor.fetchall()
+    return render_template('alerts.html', low_stock_items=low_stock_items, threshold=low_stock_threshold)
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+# File : inventory.html
+
+<h1>Blood Inventory</h1>
+<table border="1">
+    <tr>
+        <th>Blood Type</th>
+        <th>Quantity (Units)</th>
+    </tr>
+    {% for item in inventory %}
+    <tr>
+        <td>{{ item.blood_type }}</td>
+        <td>{{ item.quantity }}</td>
+    </tr>
+    {% endfor %}
+</table>
+<br>
+<a href="{{ url_for('add_donation') }}">Add Donation</a> | 
+<a href="{{ url_for('donors') }}">View Donors</a> | 
+<a href="{{ url_for('alerts') }}">Low Stock Alerts</a>
+
+# File : add_donation.html
+
+<h1>Add New Donation</h1>
+<form action="{{ url_for('add_donation') }}" method="POST">
+    <label>Name:</label>
+    <input type="text" name="name" required><br>
+    <label>Age:</label>
+    <input type="number" name="age" required><br>
+    <label>Gender:</label>
+    <select name="gender" required>
+        <option value="Male">Male</option>
+        <option value="Female">Female</option>
+    </select><br>
+    <label>Blood Type:</label>
+    <select name="blood_type" required>
+        <option value="A+">A+</option>
+        <option value="A-">A-</option>
+        <option value="B+">B+</option>
+        <option value="B-">B-</option>
+        <option value="AB+">AB+</option>
+        <option value="AB-">AB-</option>
+        <option value="O+">O+</option>
+        <option value="O-">O-</option>
+    </select><br>
+    <label>Contact Info:</label>
+    <input type="text" name="contact_info" required><br>
+    <label>Quantity (Units):</label>
+    <input type="number" name="quantity" required><br>
+    <button type="submit">Add Donation</button>
+</form>
+
+# File: donors.html
+
+<h1>Donor Records</h1>
+<table border="1">
+    <tr>
+        <th>Name</th>
+        <th>Age</th>
+        <th>Gender</th>
+        <th>Blood Type</th>
+        <th>Last Donation Date</th>
+    </tr>
+    {% for donor in donors %}
+    <tr>
+        <td>{{ donor.name }}</td>
+        <td>{{ donor.age }}</td>
+        <td>{{ donor.gender }}</td>
+        <td>{{ donor.blood_type }}</td>
+        <td>{{ donor.last_donation_date }}</td>
+    </tr>
+    {% endfor %}
+</table>
+
+
+# File: alerts.html
+
+<h1>Low Stock Alerts</h1>
+<p>Blood types with quantity below {{ threshold }} units:</p>
+<table border="1">
+    <tr>
+        <th>Blood Type</th>
+        <th>Quantity (Units)</th>
+    </tr>
+    {% for item in low_stock_items %}
+    <tr>
+        <td>{{ item.blood_type }}</td>
+        <td>{{ item.quantity }}</td>
+    </tr>
+    {% endfor %}
+</table>
+<br>
+<a href="{{ url_for('inventory') }}">Back to Inventory</a>
